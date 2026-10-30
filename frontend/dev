@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Runs the web app. The same script locally and in a sandbox. Env in: STACK_REPOS.
+#
+# CS_DEV: web=5173:http
+#
+# The line above is a static port, like config.json's: forwarded at once. It is here to show
+# the other spelling; config.json is the one that names the whole stack's ports.
+set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+
+# vite listens in the spawned window, so that window's log is the one to read.
+codespace-cloud dev manifest-add --label web --port 5173 --scheme http --window "${CS_DEV_REPO:-frontend}-vite"
+
+# With backend in the stack, the app starts once its database is migrated and seeded. The
+# wait is in the spawned window, so this hook does not block; a failed backend cancels it.
+await=()
+case ",${STACK_REPOS:-}," in
+	*,backend,*) await=(--await backend:db-ready) ;;
+esac
+codespace-cloud dev spawn vite ${await[@]+"${await[@]}"} -- env "PATH=$PATH" pnpm dev

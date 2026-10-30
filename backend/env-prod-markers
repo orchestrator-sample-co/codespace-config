@@ -1,0 +1,4 @@
+# Strings that mean a value is production's, one per line. `codespace audit` names the keys
+# holding one, by key and never by value, and `codespace audit --check` exits 3 while such a
+# key reaches a sandbox.
+api.sample-co.example

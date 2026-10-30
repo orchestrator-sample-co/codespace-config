@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# The shape of a `codespace test` run: runs on the laptop before anything is leased, and
+# prints declarations only (KEY=VALUE lines).
+#
+#   test-prepare <suite>... -- <arg>...
+#
+# One weight space for the suites backend/test and frontend/test spawn: each suite's share
+# of the slot's cores is its --weight over this total. With no suite named: all three.
+set -euo pipefail
+
+suites=()
+while [ $# -gt 0 ] && [ "$1" != -- ]; do
+	suites+=("$1")
+	shift
+done
+[ "${#suites[@]}" -gt 0 ] || suites=(unit integration web)
+
+total=0
+for suite in "${suites[@]}"; do
+	case "$suite" in
+		unit) total=$((total + 1)) ;;
+		integration | web) total=$((total + 2)) ;;
+	esac
+done
+[ "$total" -gt 0 ] || total=1
+echo "weight_total=$total"

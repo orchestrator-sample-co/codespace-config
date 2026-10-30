@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Installs backend's dependencies once its checkout is there. Local and remote: the same
+# `make install` in both; only the check for a missing runtime differs. Runs again whenever
+# `dev -r` sees that uv.lock or .python-version moved (the stamp at the end).
+#
+# Bringing up the database and migrating are `dev`'s, not this hook's.
+set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+lib="$(dirname "$(realpath "${BASH_SOURCE[0]}")")/../lib"
+# shellcheck source=../lib/uv-pin.sh
+source "$lib/uv-pin.sh"
+
+# .env is the developer's, so a stack links it, and `dev -r` re-ships it when it changes.
+codespace post-create.link-files-from-repo .env
+# AGENTS.md is tracked here. A personal copy on your user/<login> branch of the config wins,
+# hidden from git; without one the repo's stays.
+codespace post-create.link-files-from-config --force AGENTS.md
+codespace post-create.link-alias --force AGENTS.md CLAUDE.md
+
+pin="$(sample_co_uv_pinned pyproject.toml)"
+if [ -n "${CS_REMOTE_CODESPACE:-}" ]; then
+	# The org bootstrap ran once for the sandbox, on whatever branch was there.
+	sample_co_uv_ensure "$pin"
+else
+	# A laptop is the developer's: say what is missing, and never install behind their back.
+	have="$(uv --version 2>/dev/null | awk '{ print $2; exit }')" || have=""
+	if [ -z "$have" ] || ! command -v make >/dev/null 2>&1 || { [ -n "$pin" ] && [ "$have" != "$pin" ]; }; then
+		>&2 echo "err: backend needs make and uv ${pin:-} on PATH (found uv ${have:-none})"
+		>&2 echo "     install sample-co's laptop toolchain: codespace doctor --fix"
+		exit 1
+	fi
+	command -v docker >/dev/null 2>&1 \
+		|| >&2 echo "note: docker not found: \`codespace dev\` needs it for the database (install Docker Desktop)"
+fi
+
+make install
+
+# Record what this install was made from, so `dev -r` reinstalls when it moves. A virtualenv
+# bakes in its own path, so it is stamped and not cached. deps-cache runs only in a sandbox.
+if [ -n "${CS_REMOTE_CODESPACE:-}" ]; then
+	codespace deps-cache stamp .venv --key-from uv.lock --key-from .python-version
+fi

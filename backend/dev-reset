@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Takes away what `dev` built that outlives `dev stop`: the seeded database. Runs where the
+# session ran (`codespace env rm`, or `codespace dev __reset`). The next `dev` starts from an
+# empty database. Safe to run again. Env in: CS_DEV_ROOT.
+set -euo pipefail
+lib="$(dirname "$(realpath "${BASH_SOURCE[0]}")")/../lib"
+# shellcheck source=../lib/compose.sh
+source "$lib/compose.sh"
+
+docker compose -p "$(sample_co_compose_project "$CS_DEV_ROOT")" down -v
+rm -f "$CS_DEV_ROOT/.codespace/ready-auth"

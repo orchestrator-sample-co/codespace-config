@@ -1,0 +1,33 @@
+{
+  "version": "0",
+  "org": "sample-co",
+  "dev": {
+    "probe_timeout": 300,
+    "ports": { "web": { "port": 5173, "scheme": "http" }, "api": 8000 },
+    "preview": ["web", "api"]
+  },
+  "sandbox": { "cpus": 4, "memory": "8g" },
+  "cache": {
+    "repo": "backend",
+    "compose": ["compose.yml"],
+    "paths": ["migrations/**"],
+    "warm": [{ "repo": "backend", "branch": "main", "every": "12h" }]
+  },
+  "test": {
+    "sandbox": { "cpus": 8, "memory": "16g" },
+    "default": ["unit", "integration", "web"],
+    "timeout": 1800,
+    "stall": 600
+  },
+  "clean": { "protect": [".env"], "reclaim": [".venv", "node_modules", ".pytest_cache"] },
+  "stacks": {
+    "default": [
+      { "name": "backend", "cloneURL": "git@github.com:orchestrator-sample-co/backend.git" },
+      { "name": "frontend", "cloneURL": "git@github.com:orchestrator-sample-co/frontend.git" }
+    ],
+    "api-only": {
+      "repos": [{ "name": "backend", "cloneURL": "git@github.com:orchestrator-sample-co/backend.git" }],
+      "sandbox": { "cpus": 2, "memory": "4g" }
+    }
+  }
+}

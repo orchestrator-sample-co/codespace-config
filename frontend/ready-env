@@ -1,0 +1,2 @@
+# Per-stack values no env file holds, which frontend/ready reads: one name per line.
+VITE_API_URL

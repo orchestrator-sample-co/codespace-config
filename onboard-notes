@@ -1,0 +1,3 @@
+what `codespace dev -r` will need from you:
+• *app env*: in `{projects_dir}/backend`, `cp .env.example .env`. The values there are for development only; `dev -r` refuses to start and says so while it is missing.
+• *identity*: with no `~/.config/sample-co/dev-identity`, `dev -r` offers `setup-identity`: answer Y. It records who runs the stack, and nothing else.

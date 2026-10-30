@@ -1,0 +1,10 @@
+# Host-level files every sandbox of this repo's stacks gets in its home. Lives beside the
+# user, in no repo. `dev -r` ships them, and re-ships what changed.
+
+# Who runs this stack. Required: with no such file, `dev -r` offers to run the script after
+# the `||` (setup-identity, beside this file) at a terminal.
+required ~/.config/sample-co/dev-identity || setup-identity
+
+# A file the app can do without goes on an `optional` line: shipped when the laptop has it,
+# and skipped silently when not. For example, a token for a private package registry:
+# optional ~/.config/sample-co/registry-token

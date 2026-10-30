@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+# The deep check, after ports are forwarded and before the browser opens: does the app's
+# main feature work, as the dev user? Runs on the laptop, with curl only.
+#
+# Exit 0: ready. 75: backend's bring-up is still running; keep trying. 78: it failed, retrying
+# cannot help; `codespace dev` exits 1. Anything else: tried again until probe_timeout.
+#
+# Everything from the sandbox is data: the marker, the env values, the checkout this runs in.
+# Nothing from them is sourced or evaluated, and the marker's token goes to this stack's own
+# API url only, which codespace itself set.
+#
+# Env in: CS_DEV_URL_API, CS_DEV_URL_WEB; CS_DEV_READY_AUTH_FILE (remote: the marker, fetched
+# over ssh) or CS_DEV_ROOT (local: it is on disk); VITE_API_URL (declared in ready-env).
+set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+
+api="${CS_DEV_URL_API:-}"
+web="${CS_DEV_URL_WEB:-}"
+[ -n "$api" ] || { >&2 echo "ready: CS_DEV_URL_API unset"; exit 1; }
+[ -n "$web" ] || { >&2 echo "ready: CS_DEV_URL_WEB unset"; exit 1; }
+
+# `codespace dev timings` shows a row per check, the first time it passes: this hook starts
+# over on every retry, so a row per attempt would bury the moment each gate opened. Both
+# variables are unset when the run is not timed.
+phase_dir=""
+if [ -n "${CS_PHASE_FILE:-}" ] && [ -n "${CS_PHASE_ONCE_DIR:-}" ]; then
+	phase_dir="$CS_PHASE_ONCE_DIR/ready-frontend"
+	mkdir -p "$phase_dir" 2>/dev/null || phase_dir=""
+fi
+now_ms() {
+	# Second precision where the shell has no EPOCHREALTIME (macOS's bash 3.2).
+	local now="${EPOCHREALTIME:-}"
+	if [ -n "$now" ]; then
+		local fraction="${now#*[.,]}000"
+		printf '%s%s\n' "${now%%[.,]*}" "${fraction:0:3}"
+	else
+		printf '%s000\n' "$(date +%s)"
+	fi
+}
+begin=""
+phase_begin() { begin="$(now_ms)"; }
+phase_end() {
+	[ -n "$phase_dir" ] && [ ! -e "$phase_dir/$1" ] || return 0
+	: >"$phase_dir/$1"
+	local end
+	end="$(now_ms)"
+	printf '%s\t%s\t%s\t%s\t%s\n' "ready-$1" "$begin" "$end" "$((end - begin))" "${2:-}" >>"$CS_PHASE_FILE"
+}
+
+# 1. The API answers, its database included.
+phase_begin
+curl -fsS --max-time 10 -o /dev/null "$api/health" || {
+	>&2 echo "ready: the API's /health does not answer yet ($api/health)"
+	exit 1
+}
+phase_end api
+
+# 2. The web app's first compile, here rather than in your first tab.
+phase_begin
+code="$(curl -sS --max-time 120 -o /dev/null -w '%{http_code}' "$web/" || true)"
+case "$code" in
+	2?? | 3??) ;;
+	*)
+		>&2 echo "ready: the web app answers ${code:-nothing} at /"
+		exit 1
+		;;
+esac
+phase_end web
+
+# 3. The marker backend's dev writes: `state=` says whether it is worth waiting.
+marker="${CS_DEV_READY_AUTH_FILE:-${CS_DEV_ROOT:-}/.codespace/ready-auth}"
+[ -f "$marker" ] || {
+	>&2 echo "ready: waiting for the ready-auth marker (backend dev)"
+	exit 1
+}
+state="$(sed -n 's/^state=//p' "$marker" | head -1)"
+token="$(sed -n 's/^token=//p' "$marker" | head -1)"
+case "$state" in
+	ready) ;;
+	running)
+		>&2 echo "ready: backend's dev is still bringing up the database"
+		exit 75
+		;;
+	failed)
+		>&2 echo "ready: backend's dev failed; see codespace dev logs backend"
+		exit 78
+		;;
+	*)
+		>&2 echo "ready: the ready-auth marker has no state I know"
+		exit 1
+		;;
+esac
+case "$token" in
+	'' | *[!A-Za-z0-9._-]*)
+		>&2 echo "ready: the ready-auth marker holds no usable token (backend dev)"
+		exit 1
+		;;
+esac
+
+# 4. The primary feature: add a note as the dev user, and read it back.
+phase_begin
+auth=(-H "Authorization: Bearer $token")
+note="ready-check-$(now_ms)"
+curl -fsS --max-time 15 -o /dev/null "${auth[@]}" -H 'Content-Type: application/json' \
+	-d "{\"body\":\"$note\"}" "$api/notes" || {
+	>&2 echo "ready: could not add a note as the dev user ($api/notes)"
+	exit 1
+}
+notes="$(curl -fsS --max-time 15 "${auth[@]}" "$api/notes")" || {
+	>&2 echo "ready: could not read the notes back as the dev user ($api/notes)"
+	exit 1
+}
+case "$notes" in
+	*"\"$note\""*) ;;
+	*)
+		>&2 echo "ready: the note just added is not in the list ($api/notes)"
+		exit 1
+		;;
+esac
+phase_end notes
+
+# 5. This stack runs as whoever this laptop says it is. A local stack with no identity file
+# has no owner to compare: `mirrored-files` makes it required only for a sandbox.
+identity="$HOME/.config/sample-co/dev-identity"
+if [ -f "$identity" ]; then
+	want="$(sed -n 's/^owner=//p' "$identity" | head -1)"
+	whoami="$(curl -fsS --max-time 15 "${auth[@]}" "$api/whoami")" || {
+		>&2 echo "ready: /whoami does not answer ($api/whoami)"
+		exit 1
+	}
+	case "$whoami" in
+		*"\"owner\":\"$want\""*) ;;
+		*)
+			>&2 echo "ready: /whoami does not name this laptop's owner '$want'; run codespace dev -r again"
+			exit 1
+			;;
+	esac
+fi
+
+# 6. The web app was told the API this check just talked to. Under a preview they differ on
+# purpose: the app calls the public url, this check the laptop's. The value reaches this hook
+# only from a sandbox (ready-env), so a local run has nothing to compare.
+if [ -z "${CS_DEV_PREVIEW:-}" ] && [ -n "${CS_DEV_READY_AUTH_FILE:-}" ] && [ "${VITE_API_URL:-}" != "$api" ]; then
+	>&2 echo "ready: the web app's VITE_API_URL is not this stack's API ($api); see frontend/patch-configs"
+	exit 1
+fi

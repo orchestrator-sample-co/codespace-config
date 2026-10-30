@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# `codespace test`'s hook for backend, run in the sandbox with this checkout as its cwd.
+#
+#   test [unit|integration]... -- <pytest arg>...
+#
+# Each suite is a window of its own, with its weight share of the slot's cores (the weights
+# add up in ../test-prepare). integration runs on its own test database (compose.test.yml),
+# so the dev session's is never touched. A window gets the run's environment and not this
+# hook's: what it needs goes on its command line.
+set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+
+suites=()
+while [ $# -gt 0 ] && [ "$1" != -- ]; do
+	suites+=("$1")
+	shift
+done
+[ $# -eq 0 ] || shift
+
+want() {
+	local suite
+	[ "${#suites[@]}" -gt 0 ] || return 0
+	for suite in "${suites[@]}"; do
+		[ "$suite" = "$1" ] && return 0
+	done
+	return 1
+}
+
+# The run's pytest arguments, quoted to survive make's shell.
+args=""
+[ $# -eq 0 ] || args="$(printf '%q ' "$@")"
+
+if want unit; then
+	codespace-cloud test spawn unit --weight 1 --cwd "$PWD" -- env "PATH=$PATH" make test-unit "ARGS=$args"
+fi
+
+if want integration; then
+	# The services come up in a window of their own and say when they are there, or that they
+	# will not be: a waiter is cancelled with the reason instead of waiting out its timeout.
+	# shellcheck disable=SC2016  # expands in the window
+	codespace-cloud test spawn services --cwd "$PWD" -- bash -c '
+		export PATH="$1"
+		[ "${CS_TEST_FRESH:-0}" != 1 ] || make test-services-down
+		if make test-services-up; then
+			codespace-cloud test signal services-ready
+		else
+			codespace-cloud test signal services-ready --failed "the test database did not come up"
+			exit 1
+		fi' _ "$PATH"
+	# shellcheck disable=SC2016  # expands in the window
+	codespace-cloud test spawn integration --await services-ready --weight 2 --cwd "$PWD" -- bash -c '
+		export PATH="$1"
+		rc=0
+		make test-integration ARGS="$2" || rc=$?
+		make test-services-down
+		exit "$rc"' _ "$PATH" "$args"
+fi

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Points the web app at THIS codespace's API. Runs before anything starts, because vite
+# reads VITE_* when it serves. Local and remote. Env in: CS_DEV_URL_API, which under a
+# preview is the public url: a viewer's browser calls it.
+set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+
+# Unset means no API in the topology: leave the app's own default alone.
+if [ -n "${CS_DEV_URL_API:-}" ]; then
+	codespace-cloud dev env-set VITE_API_URL "$CS_DEV_URL_API"
+fi

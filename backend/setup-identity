@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Writes ~/.config/sample-co/dev-identity, the one line that says who runs a stack:
+#   owner=<your GitHub login, else your user name>
+#
+# `dev -r` offers this script when the file is missing (`mirrored-files`, beside this file).
+# Safe to run again by hand, from your backend checkout:
+#   bash "$(codespace config)/backend/setup-identity"
+# Asks at a terminal only; with none, it takes the default. Runs on the laptop.
+set -euo pipefail
+
+file="$HOME/.config/sample-co/dev-identity"
+if [ -s "$file" ]; then
+	>&2 echo "setup-identity: ready ($file)"
+	exit 0
+fi
+
+owner="$(gh api user --jq .login 2>/dev/null)" || owner=""
+[ -n "$owner" ] || owner="${USER:-$(id -un)}"
+if { : </dev/tty; } 2>/dev/null; then
+	>&2 printf 'setup-identity: who runs your stacks? [%s]: ' "$owner"
+	read -r answer </dev/tty || answer=""
+	[ -z "$answer" ] || owner="$answer"
+fi
+case "$owner" in
+	*[!A-Za-z0-9._-]*)
+		>&2 echo "err: setup-identity: '$owner' is not a name (letters, digits, dots, dashes and underscores)"
+		exit 1
+		;;
+esac
+
+mkdir -p "$(dirname "$file")"
+(umask 077 && printf 'owner=%s\n' "$owner" >"$file")
+>&2 echo "setup-identity: ready (owner=$owner, in $file)"

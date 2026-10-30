@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Runs backend: its database, migrations, the dev user, the worker and the API. The same
+# script locally and in a sandbox, in a tmux window whose cwd is this checkout.
+#
+# Env in: CS_DEV_ROOT, CS_DEV_REPO. Out: the `db-ready` signal, for this repo's
+# worker and for frontend; `$CS_DEV_ROOT/.codespace/ready-auth`, for frontend/ready:
+#   state=running|ready|failed
+#   email=<the dev user>
+#   token=<its token: for this stack's own development database, 0600, never printed>
+set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+lib="$(dirname "$(realpath "${BASH_SOURCE[0]}")")/../lib"
+# shellcheck source=../lib/compose.sh
+source "$lib/compose.sh"
+
+# Announced up-front, so the laptop forwards it while the database comes up below.
+codespace-cloud dev manifest-add --label api --port "${PORT:-8000}" --scheme http
+
+# Each stack's database is its own; backend/pre-delete takes this project down.
+COMPOSE_PROJECT_NAME="$(sample_co_compose_project "$CS_DEV_ROOT")"
+export COMPOSE_PROJECT_NAME
+
+marker="$CS_DEV_ROOT/.codespace/ready-auth"
+mkdir -p "$(dirname "$marker")"
+write_marker() {
+	(umask 077 && printf '%s\n' "$@" >"$marker.tmp" && mv "$marker.tmp" "$marker")
+}
+
+# state=running while this bring-up is alive, and failed on any exit before the end, which
+# is what lets frontend/ready answer "still coming up" (75) honestly. `exec` below ends the
+# trap along with this shell, once the marker says ready.
+write_marker state=running
+trap 'write_marker state=failed' EXIT
+
+# Both outcomes signal, so a waiter gets a reason instead of waiting out its timeout.
+fail() {
+	>&2 echo "err: backend dev: $1"
+	>&2 echo "     fix it, then run codespace dev again (see codespace dev logs backend)"
+	codespace-cloud dev signal db-ready --failed "$1" || true
+	exit 1
+}
+
+make db-up || fail "the database did not come up"
+make migrate || fail "the migrations failed"
+
+# The snapshot boundary: in a warm sandbox `--wait` returns once the migrated, empty database
+# is published for the org, so the seed below can never land in it. In a normal session it
+# is a no-op. Failing disarms, so nothing from this run gets published.
+codespace-cloud sandbox cache arm --wait \
+	|| echo "note: cache arm --wait failed; disarmed, so no database snapshot from this run"
+
+# stdout holds the token: captured and parsed here, never echoed. An `err:` line on stderr
+# stays in this window's log.
+seeded="$(make -s seed)" || fail "the seed failed"
+email="$(sed -n 's/^READY_AUTH email=\([^ ]*\) token=.*/\1/p' <<<"$seeded")"
+token="$(sed -n 's/^READY_AUTH email=[^ ]* token=\(.*\)/\1/p' <<<"$seeded")"
+if [ -z "$email" ] || [ -z "$token" ]; then
+	fail "the seed printed no READY_AUTH line"
+fi
+write_marker state=ready "email=$email" "token=$token"
+echo "==> dev user seeded: $email"
+
+codespace-cloud dev signal db-ready
+
+# A second long-lived process gets its own window: inspectable, reaped by `dev stop`.
+# PATH on its command line, because a window does not inherit what this hook exported.
+codespace-cloud dev spawn worker --await db-ready -- env "PATH=$PATH" make worker
+
+trap - EXIT
+exec make api

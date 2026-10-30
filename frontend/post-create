@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Installs frontend's dependencies once its checkout is there. Local and remote: in a sandbox
+# through the dependency cache, so a second stack links the tree the first one built.
+set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+
+# AGENTS.md is tracked here. A personal copy on your user/<login> branch of the config wins,
+# hidden from git; without one the repo's stays.
+codespace post-create.link-files-from-config --force AGENTS.md
+codespace post-create.link-alias --force AGENTS.md CLAUDE.md
+
+if [ -z "${CS_REMOTE_CODESPACE:-}" ]; then
+	# A laptop is the developer's: say what is missing, and never install behind their back.
+	major="$(node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/')" || major=""
+	if [ "${major:-0}" -lt 22 ] || ! command -v pnpm >/dev/null 2>&1; then
+		>&2 echo "err: frontend needs node 22 or later and pnpm on PATH (found node ${major:-none})"
+		>&2 echo "     install sample-co's laptop toolchain: codespace doctor --fix"
+		exit 1
+	fi
+	pnpm install --frozen-lockfile
+	exit 0
+fi
+
+# Keyed on the lockfile and on node's major version, which native modules are built for. A
+# miss changes nothing and exits non-zero, so the fallback is just the install.
+key=(--key-from pnpm-lock.yaml --key-tool node:1)
+codespace deps-cache restore node_modules "${key[@]}" || {
+	pnpm install --frozen-lockfile &&
+		codespace deps-cache save node_modules "${key[@]}"
+}

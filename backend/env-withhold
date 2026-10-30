@@ -1,0 +1,5 @@
+# Keys kept out of every env file of this repo that ships to a sandbox: globs, one per line.
+# The sandbox gets a copy without them, and the ship line names them; your file is untouched.
+# A guardrail, not the fix: anything that ships should hold dev-only credentials.
+SENTRY_*
+*_LIVE_*

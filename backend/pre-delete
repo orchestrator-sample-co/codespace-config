@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Removes this stack's database volume when the stack is removed. `codespace rm` runs it in
+# the sandbox, or on the laptop for a local stack, where the volume would otherwise stay on
+# your docker engine for good. A failure warns and the removal carries on.
+#
+# Only this stack's project, by name, never a sweep: `clean --rm` removes many stacks in a
+# loop. Env in: CS_DELETE_ROOT.
+set -euo pipefail
+lib="$(dirname "$(realpath "${BASH_SOURCE[0]}")")/../lib"
+# shellcheck source=../lib/compose.sh
+source "$lib/compose.sh"
+
+[ -n "${CS_DELETE_ROOT:-}" ] || {
+	>&2 echo "note: pre-delete: CS_DELETE_ROOT unset; leaving the database alone"
+	exit 0
+}
+command -v docker >/dev/null 2>&1 || {
+	>&2 echo "note: pre-delete: no docker here; nothing to remove"
+	exit 0
+}
+docker compose -p "$(sample_co_compose_project "$CS_DELETE_ROOT")" down -v

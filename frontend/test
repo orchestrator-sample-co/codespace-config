@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# `codespace test`'s hook for frontend, run in the sandbox with this checkout as its cwd.
+#
+#   test [web]... -- <vitest arg>...
+#
+# One suite, in a window of its own, with its weight share of the slot's cores (the weights
+# add up in ../test-prepare). A window gets the run's environment and not this hook's: what
+# it needs goes on its command line.
+set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+
+selected=""
+named=""
+while [ $# -gt 0 ] && [ "$1" != -- ]; do
+	named=1
+	[ "$1" != web ] || selected=1
+	shift
+done
+[ $# -eq 0 ] || shift
+[ -z "$named" ] || [ -n "$selected" ] || exit 0
+
+codespace-cloud test spawn web --weight 2 --cwd "$PWD" -- env "PATH=$PATH" pnpm test "$@"

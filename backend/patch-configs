@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Points the API at THIS codespace. Runs before anything starts, because the API builds its
+# CORS middleware once, at import. Local and remote.
+#
+# Env in: CS_DEV_URL_WEB, and under a preview CS_DEV_LOCAL_URL_WEB. Env goes out through
+# `dev env-set` and never into .env: that file is a symlink into your own checkout, shared
+# by every stack.
+set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+lib="$(dirname "$(realpath "${BASH_SOURCE[0]}")")/../lib"
+# shellcheck source=../lib/dotenv.sh
+source "$lib/dotenv.sh"
+
+# The API does not start without this key. 78 stops the whole start now, naming backend,
+# rather than leaving a window dead at import.
+if ! sample_co_env_get SAMPLE_CO_SECRET_KEY >/dev/null; then
+	>&2 echo "err: backend has no SAMPLE_CO_SECRET_KEY: it comes from your own env file, which ships to the stack"
+	>&2 echo "     in your backend checkout on this laptop (the one beside the stacks): cp .env.example .env"
+	>&2 echo "     then: codespace dev -r"
+	exit 78
+fi
+
+# Read the list and add to it: real env replaces the file's value wholesale, which would drop
+# whatever else your .env allows. Under a preview, web is its public url and your own browser
+# still opens the laptop's, so both go in. The exact origins only, never a wildcard.
+web="${CS_DEV_URL_WEB:-}"
+if [ -n "$web" ]; then
+	origins="$(sample_co_env_get CORS_ORIGINS || true)"
+	for origin in "$web" ${CS_DEV_LOCAL_URL_WEB:+"$CS_DEV_LOCAL_URL_WEB"}; do
+		case ",$origins," in
+			*",$origin,"*) ;;
+			*) origins="${origins:+$origins,}$origin" ;;
+		esac
+	done
+	codespace-cloud dev env-set CORS_ORIGINS "$origins"
+else
+	>&2 echo "note: patch-configs: no web url in this stack; leaving backend's CORS_ORIGINS alone"
+fi
+
+# Who runs this stack (`mirrored-files` ships the file); /whoami says it back, and
+# frontend/ready checks it. Read as data, line by line: it is never sourced.
+identity="$HOME/.config/sample-co/dev-identity"
+owner="$(sed -n 's/^owner=//p' "$identity" 2>/dev/null | head -1)" || owner=""
+if [ -n "$owner" ]; then
+	codespace-cloud dev env-set SAMPLE_CO_DEV_OWNER "$owner"
+fi
